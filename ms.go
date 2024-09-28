@@ -9,11 +9,30 @@ const ANY = "ANY"
 
 type HandleFunc func(ctx *Context)
 
+type MiddlewareFunc func(handleFunc HandleFunc) HandleFunc
+
 type routerGroup struct {
 	name             string
 	handleFuncMap    map[string]map[string]HandleFunc
 	handlerMethodMap map[string][]string
 	treeNode         *treeNode
+	middlewares      []MiddlewareFunc
+}
+
+func (r *routerGroup) Use(middlewareFunc ...MiddlewareFunc) {
+	r.middlewares = append(r.middlewares, middlewareFunc...)
+}
+
+func (r *routerGroup) methodHandle(h HandleFunc, ctx *Context) {
+	// 中间件
+
+	if r.middlewares != nil {
+		for _, middleware := range r.middlewares {
+			h = middleware(h)
+		}
+	}
+	h(ctx)
+
 }
 
 type router struct {
@@ -58,6 +77,12 @@ func (r *routerGroup) Put(name string, handleFunc HandleFunc) {
 func (r *routerGroup) Delete(name string, handleFunc HandleFunc) {
 	r.handle(name, http.MethodDelete, handleFunc)
 }
+func (r *routerGroup) Patch(name string, handleFunc HandleFunc) {
+	r.handle(name, http.MethodPatch, handleFunc)
+}
+func (r *routerGroup) Options(name string, handleFunc HandleFunc) {
+	r.handle(name, http.MethodOptions, handleFunc)
+}
 
 type Engine struct {
 	router
@@ -76,6 +101,9 @@ func (e *Engine) Run() {
 	}
 }
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	e.httpRequestHandle(w, r)
+}
+func (e *Engine) httpRequestHandle(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	for _, group := range e.routerGroups {
 		routerName := SubStringLast(r.RequestURI, group.name)
@@ -85,12 +113,12 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ctx := &Context{w, r}
 			handle, ok := group.handleFuncMap[node.routerName][ANY]
 			if ok {
-				handle(ctx)
+				group.methodHandle(handle, ctx)
 				return
 			}
 			handle, ok = group.handleFuncMap[node.routerName][method]
 			if ok {
-				handle(ctx)
+				group.methodHandle(handle, ctx)
 				return
 			}
 			w.WriteHeader(http.StatusMethodNotAllowed)
