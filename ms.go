@@ -13,6 +13,7 @@ type routerGroup struct {
 	name             string
 	handleFuncMap    map[string]map[string]HandleFunc
 	handlerMethodMap map[string][]string
+	treeNode         *treeNode
 }
 
 type router struct {
@@ -24,6 +25,7 @@ func (r *router) Group(name string) *routerGroup {
 		name:             name,
 		handleFuncMap:    make(map[string]map[string]HandleFunc),
 		handlerMethodMap: make(map[string][]string),
+		treeNode:         &treeNode{name: "/", children: make([]*treeNode, 0)},
 	}
 	r.routerGroups = append(r.routerGroups, group)
 	return group
@@ -38,7 +40,8 @@ func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) 
 		panic("method already exists")
 	}
 	r.handleFuncMap[name][method] = handleFunc
-
+	// 这里注册路由name为
+	r.treeNode.Put(name)
 }
 func (r *routerGroup) Any(name string, handleFunc HandleFunc) {
 	r.handle(name, ANY, handleFunc)
@@ -75,23 +78,24 @@ func (e *Engine) Run() {
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	for _, group := range e.routerGroups {
-		for name, methodHandle := range group.handleFuncMap {
-			url := "/" + group.name + "/" + name
-			if r.RequestURI == url {
-				ctx := &Context{w, r}
-				handle, ok := methodHandle[ANY]
-				if ok {
-					handle(ctx)
-					return
-				}
-				handle, ok = methodHandle[method]
-				if ok {
-					handle(ctx)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(w, "%s %s not allowed \n", r.RequestURI, method)
+		routerName := SubStringLast(r.RequestURI, group.name)
+		node := group.treeNode.Get(routerName)
+		if node != nil && node.isEnd {
+			// 路由匹配
+			ctx := &Context{w, r}
+			handle, ok := group.handleFuncMap[node.routerName][ANY]
+			if ok {
+				handle(ctx)
+				return
 			}
+			handle, ok = group.handleFuncMap[node.routerName][method]
+			if ok {
+				handle(ctx)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(w, "%s %s not allowed \n", r.RequestURI, method)
+			return
 		}
 	}
 	w.WriteHeader(http.StatusNotFound)
